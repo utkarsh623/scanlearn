@@ -1,0 +1,60 @@
+name: scan_learn
+description: "A Flutter app that scans real-world objects and provides educational content"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.8.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  camera: ^0.10.5+5
+  image_picker: ^1.0.7
+  flutter_tts: ^3.8.5
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  lottie: ^2.7.0
+  shared_preferences: ^2.1.1
+  permission_handler: ^11.3.1
+  path_provider: ^2.1.3
+  connectivity_plus: ^7.2.0
+  pin_code_fields: ^8.0.0
+  mobile_scanner: ^7.0.1
+  flutter_riverpod: ^2.5.1
+  supabase_flutter: ^2.16.0
+  flutter_image_compress: ^2.4.0
+  google_fonts: ^6.3.3
+  flutter_dotenv: ^6.0.1
+  intl: ^0.20.3
+  shimmer: ^3.0.0
+  cached_network_image: ^3.4.1
+  go_router: ^17.3.0
+  http: ^1.6.0
+  flutter_animate: ^4.5.0
+  glassmorphism: ^3.0.0
+  flutter_ai_toolkit:
+  google_generative_ai:
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
+  hive_generator: ^2.0.1
+  build_runner: ^2.4.7
+  mocktail: ^1.0.5
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/images/
+    - .env
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/images/img4.png"
