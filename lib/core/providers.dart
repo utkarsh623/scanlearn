@@ -1,16 +1,18 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:scan_learn/repositories/scan_repository.dart';
 import 'package:scan_learn/services/camera_service.dart';
 import 'package:scan_learn/services/gemini_service.dart';
 import 'package:scan_learn/services/storage_service.dart';
 import 'package:scan_learn/models/scan_model.dart';
-import 'package:scan_learn/models/collection_model.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
 final geminiServiceProvider = Provider((ref) => GeminiService());
 final storageServiceProvider = Provider((ref) => StorageService());
 final cameraServiceProvider = Provider((ref) => CameraService());
+final ttsProvider = Provider((ref) => FlutterTts());
 
 final scanRepositoryProvider = Provider((ref) {
   return ScanRepository(
@@ -49,76 +51,37 @@ final scanHistoryProvider = FutureProvider<List<ScanModel>>((ref) async {
   }
 });
 
-final favoritesProvider = FutureProvider<List<ScanModel>>((ref) async {
-  final box = Hive.box('favorites');
-  final scanBox = Hive.box('scans');
-  final localFavoriteIds = box.keys.cast<String>().toList();
-  final localFavorites = localFavoriteIds
-      .map((id) => scanBox.get(id))
-      .whereType<ScanModel>()
-      .toList();
+// Favorites and Collections providers removed.
 
-  try {
-    final supabase = Supabase.instance.client;
-    final userId = supabase.auth.currentUser?.id;
-    if (userId == null) return localFavorites;
+// Timeline provider removed.
 
-    final res = await supabase
-        .from('favorites')
-        .select('*, scans(*)')
-        .eq('user_id', userId)
-        .order('created_at', ascending: false);
+final themeModeProvider = StateNotifierProvider<ThemeModeNotifier, ThemeMode>((ref) {
+  return ThemeModeNotifier();
+});
 
-    final remoteFavorites = res.map((json) => ScanModel.fromJson(json['scans'] as Map<String, dynamic>)).toList();
-    
-    // Update local cache
-    await box.clear();
-    for (final scan in remoteFavorites) {
-      await box.put(scan.id, true);
-      await scanBox.put(scan.id, scan);
+class ThemeModeNotifier extends StateNotifier<ThemeMode> {
+  ThemeModeNotifier() : super(_loadTheme());
+
+  static ThemeMode _loadTheme() {
+    // Safely check if box is open, otherwise default to system
+    if (!Hive.isBoxOpen('user_prefs')) return ThemeMode.system;
+    final box = Hive.box('user_prefs');
+    final isDark = box.get('isDarkMode');
+    if (isDark == null) return ThemeMode.system;
+    return isDark ? ThemeMode.dark : ThemeMode.light;
+  }
+
+  void toggleTheme(bool isDark) {
+    state = isDark ? ThemeMode.dark : ThemeMode.light;
+    if (Hive.isBoxOpen('user_prefs')) {
+      Hive.box('user_prefs').put('isDarkMode', isDark);
     }
-    return remoteFavorites;
-  } catch (e) {
-    return localFavorites;
   }
-});
-
-final collectionsProvider = FutureProvider<List<CollectionModel>>((ref) async {
-  try {
-    final supabase = Supabase.instance.client;
-    final userId = supabase.auth.currentUser?.id;
-    if (userId == null) return [];
-
-    final res = await supabase
-        .from('collections')
-        .select()
-        .eq('user_id', userId)
-        .order('created_at', ascending: false);
-
-    return res.map((json) => CollectionModel.fromJson(json)).toList();
-  } catch (e) {
-    return [];
+  
+  void setSystem() {
+    state = ThemeMode.system;
+    if (Hive.isBoxOpen('user_prefs')) {
+      Hive.box('user_prefs').delete('isDarkMode');
+    }
   }
-});
-
-final timelineProvider = FutureProvider.autoDispose<List<dynamic>>((ref) async {
-  final scan = ref.watch(currentScanProvider);
-  if (scan == null) throw Exception('No scan data');
-
-  final supabase = Supabase.instance.client;
-  
-  // Try to fetch existing timeline from Supabase
-  final res = await supabase.from('scans').select('timeline').eq('id', scan.id).maybeSingle();
-  if (res != null && res['timeline'] != null) {
-    return (res['timeline'] as List).cast<dynamic>();
-  }
-
-  // Generate new timeline via Gemini
-  final gemini = ref.watch(geminiServiceProvider);
-  final timeline = await gemini.generateTimeline(scan.objectName);
-  
-  // Save to Supabase
-  await supabase.from('scans').update({'timeline': timeline}).eq('id', scan.id);
-  
-  return timeline;
-});
+}

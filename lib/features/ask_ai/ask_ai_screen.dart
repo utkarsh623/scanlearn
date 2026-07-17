@@ -26,8 +26,9 @@ class _AskAiScreenState extends ConsumerState<AskAiScreen> {
   void _initProvider() {
     final apiKey = dotenv.env['GEMINI_API_KEY'] ?? '';
     _model = GenerativeModel(
-      model: 'gemini-1.5-flash',
+      model: 'gemini-flash-latest',
       apiKey: apiKey,
+      requestOptions: const RequestOptions(apiVersion: 'v1beta'),
     );
     
     // We try to use GeminiProvider from the toolkit if available

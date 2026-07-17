@@ -1,242 +1,99 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:http/http.dart' as http;
+import 'package:google_generative_ai/google_generative_ai.dart';
 
 class GeminiService {
   final String _apiKey = dotenv.env['GEMINI_API_KEY'] ?? '';
-  final String _baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
-
-  String _getSystemInstruction(String level, String language) {
-    return "You are an educational AI assistant. The user's learning level is $level. "
-        "Adjust vocabulary, depth, and examples accordingly:\n"
-        "- Kids: very simple words, fun comparisons, emoji allowed\n"
-        "- School Student: clear explanations, relatable examples\n"
-        "- College Student: technical accuracy, include mechanisms\n"
-        "- Professional: comprehensive, include research context and applications\n"
-        "Respond entirely in $language.";
+  
+  GenerativeModel _getModel(String modelName, String level, String language) {
+    return GenerativeModel(
+      model: modelName,
+      apiKey: _apiKey,
+      systemInstruction: Content.system(
+          "You are a highly intelligent educational AI assistant. The user's learning level is $level. "
+          "Adjust your vocabulary and depth accordingly. You must provide incredibly detailed, rich, and accurate information. Respond entirely in $language."
+      ),
+      requestOptions: const RequestOptions(apiVersion: 'v1beta'),
+    );
   }
 
-  /// CALL 1 - Scan Object (Vision)
+  /// CALL 1 - Scan Object (Multimodal Vision Generation)
   Future<Map<String, dynamic>> scanObject(
-    String base64Image,
-    String mimeType, {
+    Uint8List imageBytes, {
     String level = 'School Student',
     String language = 'English',
   }) async {
-    final url = Uri.parse('$_baseUrl/gemini-1.5-flash-latest:generateContent?key=$_apiKey');
+    final prompt = "Carefully analyze this image and identify the primary object with high precision (e.g., instead of 'Food', say 'Belgian Waffle'). "
+        "Provide a concise, engaging educational description of it (strictly 1 to 2 short paragraphs max). "
+        "Return the response strictly as a JSON object with these exact keys: "
+        "'object_name' (string - specific name of the object), 'category' (string), 'description' (string - concise, 1-2 paragraphs), 'fun_facts' (array of 3 highly interesting strings), and 'is_safe' (boolean).";
+
+    String? lastError;
+
+    try {
+      final model = _getModel('gemini-flash-latest', level, language);
+      final response = await model.generateContent([
+        Content.multi([
+          TextPart(prompt),
+          DataPart('image/jpeg', imageBytes),
+        ])
+      ]);
+      String text = response.text ?? '';
+      text = text.replaceAll('```json', '').replaceAll('```', '').trim();
+      return jsonDecode(text);
+    } catch (e) {
+      lastError = e.toString();
+      debugPrint('Gemini failed: $lastError');
+    }
     
-    final payload = {
-      "systemInstruction": {
-        "parts": [
-          {"text": _getSystemInstruction(level, language)}
-        ]
-      },
-      "contents": [
-        {
-          "parts": [
-            {
-              "inlineData": {
-                "mimeType": mimeType,
-                "data": base64Image
-              }
-            },
-            {
-              "text": "Identify this object and provide educational details about it."
-            }
-          ]
-        }
+    // Fallback if vision model fails
+    return {
+      'object_name': 'Unknown Object',
+      'category': 'Unknown',
+      'description': 'I am currently unable to analyze this image. ($lastError).',
+      'fun_facts': [
+        'AI vision models require internet access.',
+        'Sometimes API quotas can cause analysis to fail.',
+        'Try checking your API key settings.'
       ],
-      "generationConfig": {
-        "responseMimeType": "application/json",
-        "responseSchema": {
-          "type": "OBJECT",
-          "properties": {
-            "object_name": {"type": "STRING"},
-            "category": {"type": "STRING"},
-            "description": {"type": "STRING"},
-            "fun_facts": {
-              "type": "ARRAY",
-              "items": {"type": "STRING"}
-            },
-            "is_safe": {"type": "BOOLEAN"}
-          },
-          "required": ["object_name", "category", "description", "fun_facts", "is_safe"]
-        }
-      }
+      'is_safe': true
     };
-
-    final response = await http.post(
-      url,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(payload),
-    );
-
-    if (response.statusCode == 200) {
-      try {
-        final data = jsonDecode(response.body);
-        String text = data['candidates'][0]['content']['parts'][0]['text'];
-        text = text.replaceAll('```json', '').replaceAll('```', '').trim();
-        return jsonDecode(text);
-      } catch (e) {
-        throw Exception('Failed to parse JSON from Gemini: $e\nResponse: ${response.body}');
-      }
-    } else {
-      throw Exception('Failed to generate content: ${response.body}');
-    }
   }
 
-  /// CALL 2 - Generate Quiz
-  Future<List<dynamic>> generateQuiz(String objectName, String description, List<String> funFacts, {String level = 'School Student', String language = 'English'}) async {
-    final url = Uri.parse('$_baseUrl/gemini-1.5-flash-latest:generateContent?key=$_apiKey');
-    final payload = {
-      "systemInstruction": {"parts": [{"text": _getSystemInstruction(level, language)}]},
-      "contents": [
-        {
-          "parts": [
-            {"text": "Generate a 5-question multiple choice quiz about $objectName based on this info: Description: $description. Fun facts: ${funFacts.join(', ')}"}
-          ]
-        }
-      ],
-      "generationConfig": {
-        "responseMimeType": "application/json",
-        "responseSchema": {
-          "type": "ARRAY",
-          "items": {
-            "type": "OBJECT",
-            "properties": {
-              "question": {"type": "STRING"},
-              "options": {"type": "ARRAY", "items": {"type": "STRING"}},
-              "correct_index": {"type": "INTEGER"},
-              "explanation": {"type": "STRING"}
-            },
-            "required": ["question", "options", "correct_index", "explanation"]
-          }
-        }
-      }
-    };
-
-    final response = await http.post(url, headers: {'Content-Type': 'application/json'}, body: jsonEncode(payload));
-    if (response.statusCode == 200) {
-      final text = jsonDecode(response.body)['candidates'][0]['content']['parts'][0]['text'];
-      return jsonDecode(text);
-    }
-    throw Exception('Failed to generate quiz');
-  }
-
-  /// CALL 3 - Object Timeline
-  Future<List<dynamic>> generateTimeline(String objectName, {String level = 'School Student', String language = 'English'}) async {
-    final url = Uri.parse('$_baseUrl/gemini-1.5-pro-latest:generateContent?key=$_apiKey');
-    final payload = {
-      "systemInstruction": {"parts": [{"text": _getSystemInstruction(level, language)}]},
-      "contents": [
-        {"parts": [{"text": "Generate a chronological historical timeline for $objectName (5-8 entries)."}]}
-      ],
-      "generationConfig": {
-        "responseMimeType": "application/json",
-        "responseSchema": {
-          "type": "ARRAY",
-          "items": {
-            "type": "OBJECT",
-            "properties": {
-              "year": {"type": "STRING"},
-              "event": {"type": "STRING"}
-            },
-            "required": ["year", "event"]
-          }
-        }
-      }
-    };
-
-    final response = await http.post(url, headers: {'Content-Type': 'application/json'}, body: jsonEncode(payload));
-    if (response.statusCode == 200) {
-      final text = jsonDecode(response.body)['candidates'][0]['content']['parts'][0]['text'];
-      return jsonDecode(text);
-    }
-    throw Exception('Failed to generate timeline');
-  }
-
-  /// CALL 4 - AI Compare
-  Future<Map<String, dynamic>> compareObjects(String objectA, String objectB, {String level = 'School Student', String language = 'English'}) async {
-    final url = Uri.parse('$_baseUrl/gemini-1.5-pro-latest:generateContent?key=$_apiKey');
-    final payload = {
-      "systemInstruction": {"parts": [{"text": _getSystemInstruction(level, language)}]},
-      "contents": [
-        {"parts": [{"text": "Compare $objectA and $objectB in detail."}]}
-      ],
-      "generationConfig": {
-        "responseMimeType": "application/json",
-        "responseSchema": {
-          "type": "OBJECT",
-          "properties": {
-            "similarity_percent": {"type": "INTEGER"},
-            "similarities": {"type": "ARRAY", "items": {"type": "STRING"}},
-            "differences": {
-              "type": "ARRAY",
-              "items": {
-                "type": "OBJECT",
-                "properties": {
-                  "object_a": {"type": "STRING"},
-                  "object_b": {"type": "STRING"},
-                  "aspect": {"type": "STRING"}
-                }
-              }
-            },
-            "summary": {"type": "STRING"}
-          },
-          "required": ["similarity_percent", "similarities", "differences", "summary"]
-        }
-      }
-    };
-
-    final response = await http.post(url, headers: {'Content-Type': 'application/json'}, body: jsonEncode(payload));
-    if (response.statusCode == 200) {
-      final text = jsonDecode(response.body)['candidates'][0]['content']['parts'][0]['text'];
-      return jsonDecode(text);
-    }
-    throw Exception('Failed to compare objects');
-  }
-
-  /// CALL 5 - Ask AI
+  /// CALL 2 - Ask AI
   Future<String> askAi(List<Map<String, dynamic>> history, {String level = 'School Student', String language = 'English'}) async {
-    final url = Uri.parse('$_baseUrl/gemini-1.5-pro-latest:generateContent?key=$_apiKey');
-    final payload = {
-      "systemInstruction": {"parts": [{"text": _getSystemInstruction(level, language)}]},
-      "contents": history,
-    };
+    final model = _getModel('gemini-flash-latest', level, language);
+    
+    List<Content> contents = history.map((msg) {
+      return Content(msg['role'], [TextPart(msg['parts'][0]['text'])]);
+    }).toList();
 
-    final response = await http.post(url, headers: {'Content-Type': 'application/json'}, body: jsonEncode(payload));
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body)['candidates'][0]['content']['parts'][0]['text'];
+    try {
+      final response = await model.generateContent(contents);
+      return response.text ?? 'No response generated.';
+    } catch (e) {
+      return 'I am currently unable to process your request. Please check your connection and API quota.';
     }
-    throw Exception('Failed to get AI response');
   }
 
-  /// CALL 6 - Translate
+  /// CALL 3 - Translate
   Future<Map<String, dynamic>> translateContent(String description, List<String> funFacts, String targetLanguage) async {
-    final url = Uri.parse('$_baseUrl/gemini-1.5-flash-latest:generateContent?key=$_apiKey');
-    final payload = {
-      "systemInstruction": {"parts": [{"text": "You are a professional translator. Translate everything exactly to $targetLanguage."}]},
-      "contents": [
-        {"parts": [{"text": "Translate the following into $targetLanguage. Description: $description. Fun facts: ${funFacts.join(' | ')}"}]}
-      ],
-      "generationConfig": {
-        "responseMimeType": "application/json",
-        "responseSchema": {
-          "type": "OBJECT",
-          "properties": {
-            "description_translated": {"type": "STRING"},
-            "fun_facts_translated": {"type": "ARRAY", "items": {"type": "STRING"}}
-          },
-          "required": ["description_translated", "fun_facts_translated"]
-        }
-      }
-    };
+    final model = _getModel('gemini-flash-latest', 'Professional', targetLanguage);
+    final prompt = "You are a professional translator. Translate the following exactly to $targetLanguage. "
+        "Description: $description. Fun facts: ${funFacts.join(' | ')}. "
+        "Return strictly as a JSON object with keys: 'description_translated' (string) and 'fun_facts_translated' (array of strings).";
 
-    final response = await http.post(url, headers: {'Content-Type': 'application/json'}, body: jsonEncode(payload));
-    if (response.statusCode == 200) {
-      final text = jsonDecode(response.body)['candidates'][0]['content']['parts'][0]['text'];
+    try {
+      final response = await model.generateContent([Content.text(prompt)]);
+      String text = response.text ?? '';
+      text = text.replaceAll('```json', '').replaceAll('```', '').trim();
       return jsonDecode(text);
+    } catch (e) {
+      return {
+        'description_translated': 'Traducción no disponible. (Translation unavailable due to API error).',
+        'fun_facts_translated': ['Error 1', 'Error 2']
+      };
     }
-    throw Exception('Failed to translate');
   }
 }
